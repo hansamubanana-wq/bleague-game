@@ -17,7 +17,7 @@ const BALL_RADIUS = 0.14;
 const HOOP_RADIUS = 0.35; 
 const BALL_START_POS = [0, 2, 6];
 
-// --- 音声シンセサイザー ---
+// --- 音声機能 ---
 const playSound = (type) => {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return;
@@ -29,94 +29,61 @@ const playSound = (type) => {
   const now = ctx.currentTime;
 
   if (type === 'shoot') {
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(600, now);
-    osc.frequency.exponentialRampToValueAtTime(100, now + 0.3);
-    gain.gain.setValueAtTime(0.5, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+    osc.type = 'triangle'; osc.frequency.setValueAtTime(600, now); osc.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+    gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
     osc.start(now); osc.stop(now + 0.3);
   } else if (type === 'goal') {
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(800, now);
-    osc.frequency.linearRampToValueAtTime(1200, now + 0.1);
-    gain.gain.setValueAtTime(0.3, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    osc.type = 'sine'; osc.frequency.setValueAtTime(800, now); osc.frequency.linearRampToValueAtTime(1200, now + 0.1);
+    gain.gain.setValueAtTime(0.3, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
     osc.start(now); osc.stop(now + 0.5);
   } else if (type === 'buzzer') {
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(100, now);
-    osc.frequency.linearRampToValueAtTime(80, now + 1.0);
-    gain.gain.setValueAtTime(0.8, now);
-    gain.gain.linearRampToValueAtTime(0.01, now + 1.0);
+    osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, now); osc.frequency.linearRampToValueAtTime(80, now + 1.0);
+    gain.gain.setValueAtTime(0.8, now); gain.gain.linearRampToValueAtTime(0.01, now + 1.0);
     osc.start(now); osc.stop(now + 1.0);
   } else if (type === 'rim') {
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(150, now);
-    gain.gain.setValueAtTime(0.5, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+    osc.type = 'square'; osc.frequency.setValueAtTime(150, now);
+    gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
     osc.start(now); osc.stop(now + 0.1);
   }
 };
+
+// --- 見えない壁（コートの境界） ---
+function Walls() {
+  // コートサイズ(約15x28)に合わせて透明な壁を配置
+  // args: [幅, 高さ, 奥行き]
+  useBox(() => ({ type: 'Static', position: [8.5, 2, 0], args: [1, 5, 32] })); // 右
+  useBox(() => ({ type: 'Static', position: [-8.5, 2, 0], args: [1, 5, 32] })); // 左
+  useBox(() => ({ type: 'Static', position: [0, 2, 15.5], args: [18, 5, 1] })); // 手前
+  useBox(() => ({ type: 'Static', position: [0, 2, -15.5], args: [18, 5, 1] })); // 奥
+  return null; // 見えないので描画なし
+}
 
 // --- 選手モデル ---
 function PlayerModel({ team, isShooting }) {
   return (
     <group position={[0, 0, 0.4]}> 
-      {/* 胴体 */}
-      <mesh position={[0, 0.9, 0]} castShadow>
-        <boxGeometry args={[0.5, 0.6, 0.25]} />
-        <meshStandardMaterial color={team.primary} />
-      </mesh>
-      {/* ゼッケン */}
-      <Text position={[0, 0.9, -0.13]} rotation={[0, Math.PI, 0]} fontSize={0.3} color={team.secondary}>
-        23
-      </Text>
-      {/* 頭 */}
-      <mesh position={[0, 1.45, 0]} castShadow>
-        <boxGeometry args={[0.25, 0.3, 0.25]} />
-        <meshStandardMaterial color={team.skin} />
-      </mesh>
-      {/* 右腕 */}
-      <mesh 
-        position={[0.3, isShooting ? 1.4 : 0.9, 0.1]} 
-        rotation={[isShooting ? Math.PI : 0, 0, 0]}
-        castShadow
-      >
-        <boxGeometry args={[0.12, 0.5, 0.12]} />
-        <meshStandardMaterial color={team.skin} />
-      </mesh>
-      {/* 左腕 */}
-      <mesh position={[-0.3, 0.9, 0]} castShadow>
-        <boxGeometry args={[0.12, 0.5, 0.12]} />
-        <meshStandardMaterial color={team.skin} />
-      </mesh>
-      {/* パンツ */}
-      <mesh position={[0, 0.5, 0]}>
-        <boxGeometry args={[0.52, 0.3, 0.26]} />
-        <meshStandardMaterial color={team.secondary} />
-      </mesh>
-      {/* 足 */}
-      <mesh position={[-0.15, 0.15, 0]}>
-        <boxGeometry args={[0.15, 0.4, 0.15]} />
-        <meshStandardMaterial color="#333" />
-      </mesh>
-      <mesh position={[0.15, 0.15, 0]}>
-        <boxGeometry args={[0.15, 0.4, 0.15]} />
-        <meshStandardMaterial color="#333" />
-      </mesh>
+      <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[0.5, 0.6, 0.25]} /><meshStandardMaterial color={team.primary} /></mesh>
+      <Text position={[0, 0.9, -0.13]} rotation={[0, Math.PI, 0]} fontSize={0.3} color={team.secondary}>23</Text>
+      <mesh position={[0, 1.45, 0]} castShadow><boxGeometry args={[0.25, 0.3, 0.25]} /><meshStandardMaterial color={team.skin} /></mesh>
+      <mesh position={[0.3, isShooting ? 1.4 : 0.9, 0.1]} rotation={[isShooting ? Math.PI : 0, 0, 0]} castShadow><boxGeometry args={[0.12, 0.5, 0.12]} /><meshStandardMaterial color={team.skin} /></mesh>
+      <mesh position={[-0.3, 0.9, 0]} castShadow><boxGeometry args={[0.12, 0.5, 0.12]} /><meshStandardMaterial color={team.skin} /></mesh>
+      <mesh position={[0, 0.5, 0]}><boxGeometry args={[0.52, 0.3, 0.26]} /><meshStandardMaterial color={team.secondary} /></mesh>
+      <mesh position={[-0.15, 0.15, 0]}><boxGeometry args={[0.15, 0.4, 0.15]} /><meshStandardMaterial color="#333" /></mesh>
+      <mesh position={[0.15, 0.15, 0]}><boxGeometry args={[0.15, 0.4, 0.15]} /><meshStandardMaterial color="#333" /></mesh>
     </group>
   );
 }
 
 // --- ボール＆プレイヤー制御 ---
 function PlayerBall({ isResetting, setCameraTarget, team }) {
+  // 【修正】操作性を向上（摩擦を下げ、動きやすく）
   const [ref, api] = useSphere(() => ({
     mass: 1, 
     position: BALL_START_POS, 
     args: [BALL_RADIUS],
     restitution: 0.7, 
-    friction: 0.8,
-    linearDamping: 0.5,
+    friction: 0.3, // 摩擦を少し下げる（0.8 -> 0.3）
+    linearDamping: 0.2, // 空気抵抗を下げる（0.5 -> 0.2）
     angularDamping: 0.5,
   }));
 
@@ -165,17 +132,22 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
   };
 
   useFrame(() => {
+    // 物理演算ボールの位置を選手モデルに同期
     const pos = ref.current?.position;
     if (pos && playerGroupRef.current) {
       playerGroupRef.current.position.set(pos.x, 0, pos.z); 
+      // 移動中なら向きを変える
       if (!isShooting.current && (movement.x !== 0 || movement.z !== 0)) {
          const angle = Math.atan2(movement.x, movement.z);
          playerGroupRef.current.rotation.y = angle;
       }
     }
+
+    // 移動力の適用
     if (!isShooting.current) {
       if (movement.x !== 0 || movement.z !== 0) {
-        const speed = 8;
+        // 【修正】パワーをアップ（8 -> 15）
+        const speed = 15;
         api.applyForce([movement.x * speed, 0, movement.z * speed], [0, 0, 0]);
       }
     }
@@ -184,13 +156,11 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
 
   return (
     <group>
-      {/* 物理ボール */}
       <mesh ref={ref} castShadow>
         <sphereGeometry args={[BALL_RADIUS, 32, 32]} />
         <meshStandardMaterial color="#d65a18" roughness={0.2} metalness={0.1} />
         <mesh rotation={[0,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
         <mesh rotation={[Math.PI/2,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
-        
         {charging && (
           <Html position={[0, 0.8, 0]} center>
              <div style={{ width: '80px', height: '12px', border: '2px solid white', borderRadius: '6px', background: 'rgba(0,0,0,0.6)', overflow: 'hidden' }}>
@@ -199,8 +169,6 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
           </Html>
         )}
       </mesh>
-
-      {/* 選手モデル */}
       <group ref={playerGroupRef}>
         <PlayerModel team={team} isShooting={isShooting.current || charging} />
       </group>
@@ -211,85 +179,53 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
 // --- ゴール ---
 function Hoop({ onScore, team, shotClock }) {
   const [boardRef] = useBox(() => ({ type: 'Static', position: [0, 3.5, -12], args: [1.8, 1.05, 0.1] }));
-  
   useCylinder(() => ({
     isTrigger: true, args: [0.25, 0.25, 0.1, 8], position: [0, 2.8, -11.6],
     onCollide: (e) => { if (e.body.name !== 'sensor') onScore(); }
   }));
-
   const segmentCount = 16;
   const positions = [];
   for (let i = 0; i < segmentCount; i++) {
     const angle = (i / segmentCount) * Math.PI * 2;
     positions.push([Math.cos(angle) * HOOP_RADIUS, 0, Math.sin(angle) * HOOP_RADIUS]);
   }
-
   return (
     <group>
-      {/* 24秒計 */}
       <group position={[0, 4.3, -11.9]}>
         <mesh><boxGeometry args={[0.8, 0.5, 0.1]} /><meshStandardMaterial color="#111" /></mesh>
-        <Text position={[0, 0, 0.06]} fontSize={0.25} color={shotClock <= 5 ? "red" : "yellow"} anchorX="center" anchorY="middle">
-          {Math.ceil(shotClock)}
-        </Text>
+        <Text position={[0, 0, 0.06]} fontSize={0.25} color={shotClock <= 5 ? "red" : "yellow"} anchorX="center" anchorY="middle">{Math.ceil(shotClock)}</Text>
       </group>
-
       <mesh ref={boardRef} castShadow receiveShadow>
         <boxGeometry args={[1.8, 1.05, 0.1]} />
         <meshStandardMaterial color="white" />
         <mesh position={[0, -0.35, 0.06]}><boxGeometry args={[0.59, 0.45, 0.01]} /><meshBasicMaterial color={team.primary} /></mesh>
       </mesh>
-      
       <mesh position={[0, 3.05, -11.6]} rotation={[Math.PI / 2, 0, 0]}>
         <torusGeometry args={[HOOP_RADIUS, 0.02, 16, 32]} />
         <meshStandardMaterial color="orange" />
       </mesh>
-
       {positions.map((pos, i) => <RimSegment key={i} position={[pos[0], 3.05, -11.6 + pos[2]]} />)}
-      <mesh position={[0, 1.75, -12.5]}>
-        <cylinderGeometry args={[0.15, 0.15, 3.5]} />
-        <meshStandardMaterial color="#222" />
-      </mesh>
+      <mesh position={[0, 1.75, -12.5]}><cylinderGeometry args={[0.15, 0.15, 3.5]} /><meshStandardMaterial color="#222" /></mesh>
     </group>
   );
 }
-
-function RimSegment({ position }) { 
-  useBox(() => ({ type: 'Static', position, args: [0.05, 0.05, 0.05], onCollide: () => playSound('rim') })); 
-  return null; 
-}
+function RimSegment({ position }) { useBox(() => ({ type: 'Static', position, args: [0.05, 0.05, 0.05], onCollide: () => playSound('rim') })); return null; }
 
 // --- コート ---
 function Court({ team }) {
   usePlane(() => ({ rotation: [-Math.PI / 2, 0, 0], position: [0, 0, 0], material: { friction: 0.1 } }));
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[15, 28]} />
-        <meshStandardMaterial color={team.floor} />
-      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow><planeGeometry args={[15, 28]} /><meshStandardMaterial color={team.floor} /></mesh>
       <group position={[0, 0.01, 0]}>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -7]}>
-           <ringGeometry args={[6.75, 6.85, 64, 1, Math.PI, Math.PI]} />
-           <meshBasicMaterial color="white" side={2} />
-        </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -9.1]}>
-           <planeGeometry args={[4.9, 5.8]} />
-           <meshBasicMaterial color={team.primary} /> 
-        </mesh>
-        <mesh rotation={[-Math.PI / 0.5, 0, 0]} position={[0, 0, -14]}>
-            <planeGeometry args={[15, 2]} />
-            <meshBasicMaterial color={team.border} /> 
-        </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-           <ringGeometry args={[1.7, 1.8, 64]} />
-           <meshBasicMaterial color="white" />
-        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -7]}><ringGeometry args={[6.75, 6.85, 64, 1, Math.PI, Math.PI]} /><meshBasicMaterial color="white" side={2} /></mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -9.1]}><planeGeometry args={[4.9, 5.8]} /><meshBasicMaterial color={team.primary} /></mesh>
+        <mesh rotation={[-Math.PI / 0.5, 0, 0]} position={[0, 0, -14]}><planeGeometry args={[15, 2]} /><meshBasicMaterial color={team.border} /></mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[1.7, 1.8, 64]} /><meshBasicMaterial color="white" /></mesh>
       </group>
     </group>
   );
 }
-
 function CameraController({ target }) {
   useFrame((state) => {
     if (target && target.current) {
@@ -311,12 +247,9 @@ export default function App() {
   const [showGoalEffect, setShowGoalEffect] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [cameraTarget, setCameraTarget] = useState(null);
-  
-  // タイマー管理
   const [shotClock, setShotClock] = useState(24.0);
   const [isPaused, setIsPaused] = useState(false);
 
-  // 【修正】useFrameの代わりにuseEffectを使用（Canvas外でのクラッシュ防止）
   useEffect(() => {
     if (isPaused) return;
     const interval = setInterval(() => {
@@ -328,148 +261,58 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isPaused]);
 
-  // ブザービーター判定
   useEffect(() => {
-    if (shotClock <= 0 && !isResetting && !isPaused) {
-       handleBuzzerBeater();
-    }
+    if (shotClock <= 0 && !isResetting && !isPaused) handleBuzzerBeater();
   }, [shotClock]);
 
   const handleBuzzerBeater = () => {
-    playSound('buzzer');
-    setIsPaused(true);
-    setIsResetting(true);
-    setTimeout(() => {
-      setIsResetting(false);
-      setShotClock(24.0);
-      setIsPaused(false);
-    }, 2000);
+    playSound('buzzer'); setIsPaused(true); setIsResetting(true);
+    setTimeout(() => { setIsResetting(false); setShotClock(24.0); setIsPaused(false); }, 2000);
   };
 
   const handleScore = () => {
-    playSound('goal');
-    setScore(s => s + 2);
-    setShowGoalEffect(true);
-    confetti({ 
-      particleCount: 200, spread: 80, 
-      colors: [team.primary, team.secondary, '#ffffff'] 
-    });
-
+    playSound('goal'); setScore(s => s + 2); setShowGoalEffect(true);
+    confetti({ particleCount: 200, spread: 80, colors: [team.primary, team.secondary, '#ffffff'] });
     setIsPaused(true);
     setTimeout(() => {
-      setShowGoalEffect(false);
-      setIsResetting(true);
-      setTimeout(() => {
-        setIsResetting(false);
-        setShotClock(24.0);
-        setIsPaused(false);
-        setCameraTarget(null);
-      }, 100);
+      setShowGoalEffect(false); setIsResetting(true);
+      setTimeout(() => { setIsResetting(false); setShotClock(24.0); setIsPaused(false); setCameraTarget(null); }, 100);
     }, 2000);
   };
 
   return (
     <div style={{ width: '100%', height: '100%', background: '#222', overflow: 'hidden' }}>
       <Canvas shadows fov={60}>
-        <color attach="background" args={['#222']} /> {/* 背景を少し明るく */}
+        <color attach="background" args={['#222']} />
         <CameraController target={cameraTarget} />
-        
-        {/* 照明を明るく修正 */}
         <ambientLight intensity={0.7} />
         <spotLight position={[0, 20, 0]} angle={0.6} penumbra={0.5} intensity={1.5} castShadow />
         <pointLight position={[10, 10, 10]} intensity={0.8} />
         <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
-        
         <Physics gravity={[0, -9.8, 0]}>
           <Court team={team} />
+          {/* ここで壁を追加 */}
+          <Walls />
           <Hoop onScore={handleScore} team={team} shotClock={shotClock} />
           <PlayerBall isResetting={isResetting} setCameraTarget={setCameraTarget} team={team} />
         </Physics>
       </Canvas>
-      
-      {/* チーム選択ボタン */}
       <div style={{ position: 'absolute', top: 20, right: 20, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {Object.keys(TEAMS).map((key) => (
-          <button 
-            key={key}
-            onClick={() => setTeam(TEAMS[key])}
-            style={{
-              background: TEAMS[key].primary, color: TEAMS[key].secondary,
-              border: `2px solid ${TEAMS[key].secondary}`, padding: '8px 16px',
-              fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Impact'
-            }}
-          >
-            {TEAMS[key].name}
-          </button>
+          <button key={key} onClick={() => setTeam(TEAMS[key])} style={{ background: TEAMS[key].primary, color: TEAMS[key].secondary, border: `2px solid ${TEAMS[key].secondary}`, padding: '8px 16px', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Impact' }}>{TEAMS[key].name}</button>
         ))}
       </div>
-
-      {/* スコアボード */}
-      <div style={{
-        position: 'absolute', top: 20, width: '100%', textAlign: 'center', pointerEvents: 'none',
-        color: 'white', textShadow: '2px 2px 0 #000'
-      }}>
-        <div style={{ 
-          background: `linear-gradient(to bottom, ${team.primary}, black)`, 
-          display:'inline-block', padding:'10px 40px', borderRadius:'0 0 20px 20px', border:'2px solid white'
-        }}>
+      <div style={{ position: 'absolute', top: 20, width: '100%', textAlign: 'center', pointerEvents: 'none', color: 'white', textShadow: '2px 2px 0 #000' }}>
+        <div style={{ background: `linear-gradient(to bottom, ${team.primary}, black)`, display:'inline-block', padding:'10px 40px', borderRadius:'0 0 20px 20px', border:'2px solid white' }}>
           <h2 style={{ margin:0, fontSize:'1rem', letterSpacing:'2px'}}>{team.name}</h2>
           <h1 style={{ fontSize: '3.5rem', margin: 0, fontFamily: 'Impact' }}>{score}</h1>
         </div>
       </div>
-
-      {/* 警告表示 */}
-      {shotClock <= 0 && (
-        <div style={{
-          position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none',
-          color: 'red', textShadow: '0 0 20px red', animation: 'pop 0.2s infinite'
-        }}>
-          <h1 style={{ fontSize: '5rem', margin: 0, fontWeight: '900' }}>24 SEC!!</h1>
-        </div>
-      )}
-
-      {showGoalEffect && (
-        <div style={{
-          position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none',
-          color: team.primary, textShadow: '0 0 20px white', animation: 'pop 0.5s ease-out'
-        }}>
-          <h1 style={{ fontSize: '6rem', margin: 0, fontWeight: '900', fontStyle: 'italic' }}>GOAL!!</h1>
-        </div>
-      )}
-      
-      {/* コントローラー */}
-      <div style={{ position: 'absolute', bottom: 30, left: 30, zIndex: 10 }}>
-        <Joystick 
-          size={100} 
-          baseColor="rgba(255, 255, 255, 0.2)" 
-          stickColor={team.primary}
-          move={(e) => window.handleMobileMove && window.handleMobileMove(e)} 
-          stop={() => window.handleMobileMove && window.handleMobileMove({x:0, y:0})}
-        />
-      </div>
-
-      <div style={{ position: 'absolute', bottom: 50, right: 30, zIndex: 10 }}>
-        <button 
-          style={{
-            width: '90px', height: '90px', borderRadius: '50%', 
-            border: '4px solid rgba(255,255,255,0.5)',
-            background: `linear-gradient(135deg, ${team.primary}, #000)`, 
-            color: 'white', fontWeight: 'bold', fontSize: '18px',
-            boxShadow: `0 4px 15px ${team.primary}`,
-            transition: 'transform 0.1s',
-          }}
-          onMouseDown={() => window.handleMobileChargeStart && window.handleMobileChargeStart()}
-          onMouseUp={() => window.handleMobileChargeEnd && window.handleMobileChargeEnd()}
-          onTouchStart={(e) => { e.preventDefault(); window.handleMobileChargeStart && window.handleMobileChargeStart() }}
-          onTouchEnd={(e) => { e.preventDefault(); window.handleMobileChargeEnd && window.handleMobileChargeEnd() }}
-        >
-          SHOOT
-        </button>
-      </div>
-      
-      <style>{`
-        @keyframes pop { 0% { transform: scale(0); opacity:0; } 50% { transform: scale(1.2); } 100% { transform: scale(1); opacity:1; } }
-      `}</style>
+      {shotClock <= 0 && <div style={{ position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none', color: 'red', textShadow: '0 0 20px red', animation: 'pop 0.2s infinite' }}><h1 style={{ fontSize: '5rem', margin: 0, fontWeight: '900' }}>24 SEC!!</h1></div>}
+      {showGoalEffect && <div style={{ position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none', color: team.primary, textShadow: '0 0 20px white', animation: 'pop 0.5s ease-out' }}><h1 style={{ fontSize: '6rem', margin: 0, fontWeight: '900', fontStyle: 'italic' }}>GOAL!!</h1></div>}
+      <div style={{ position: 'absolute', bottom: 30, left: 30, zIndex: 10 }}><Joystick size={100} baseColor="rgba(255, 255, 255, 0.2)" stickColor={team.primary} move={(e) => window.handleMobileMove && window.handleMobileMove(e)} stop={() => window.handleMobileMove && window.handleMobileMove({x:0, y:0})} /></div>
+      <div style={{ position: 'absolute', bottom: 50, right: 30, zIndex: 10 }}><button style={{ width: '90px', height: '90px', borderRadius: '50%', border: '4px solid rgba(255,255,255,0.5)', background: `linear-gradient(135deg, ${team.primary}, #000)`, color: 'white', fontWeight: 'bold', fontSize: '18px', boxShadow: `0 4px 15px ${team.primary}`, transition: 'transform 0.1s', }} onMouseDown={() => window.handleMobileChargeStart && window.handleMobileChargeStart()} onMouseUp={() => window.handleMobileChargeEnd && window.handleMobileChargeEnd()} onTouchStart={(e) => { e.preventDefault(); window.handleMobileChargeStart && window.handleMobileChargeStart() }} onTouchEnd={(e) => { e.preventDefault(); window.handleMobileChargeEnd && window.handleMobileChargeEnd() }}>SHOOT</button></div>
+      <style>{`@keyframes pop { 0% { transform: scale(0); opacity:0; } 50% { transform: scale(1.2); } 100% { transform: scale(1); opacity:1; } }`}</style>
     </div>
   );
 }
