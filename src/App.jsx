@@ -58,10 +58,10 @@ const playSound = (type) => {
   }
 };
 
-// --- 選手モデル（見た目のみ） ---
+// --- 選手モデル ---
 function PlayerModel({ team, isShooting }) {
   return (
-    <group position={[0, 0, 0.4]}> {/* ボールの後ろに配置 */}
+    <group position={[0, 0, 0.4]}> 
       {/* 胴体 */}
       <mesh position={[0, 0.9, 0]} castShadow>
         <boxGeometry args={[0.5, 0.6, 0.25]} />
@@ -76,7 +76,7 @@ function PlayerModel({ team, isShooting }) {
         <boxGeometry args={[0.25, 0.3, 0.25]} />
         <meshStandardMaterial color={team.skin} />
       </mesh>
-      {/* 右腕（シュート時に上がる） */}
+      {/* 右腕 */}
       <mesh 
         position={[0.3, isShooting ? 1.4 : 0.9, 0.1]} 
         rotation={[isShooting ? Math.PI : 0, 0, 0]}
@@ -120,7 +120,7 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
     angularDamping: 0.5,
   }));
 
-  const playerGroupRef = useRef(); // 選手モデル操作用Ref
+  const playerGroupRef = useRef();
   const [movement, setMovement] = useState({ x: 0, z: 0 });
   const [charging, setCharging] = useState(false);
   const [power, setPower] = useState(0);
@@ -165,27 +165,20 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
   };
 
   useFrame(() => {
-    // 物理演算ボールの位置を取得
     const pos = ref.current?.position;
-
-    // 選手モデルの位置を直接更新（Stateを使わないので高速・軽量）
     if (pos && playerGroupRef.current) {
-      playerGroupRef.current.position.set(pos.x, 0, pos.z); // y=0で固定
-      
-      // 移動しているなら向きを変える
+      playerGroupRef.current.position.set(pos.x, 0, pos.z); 
       if (!isShooting.current && (movement.x !== 0 || movement.z !== 0)) {
          const angle = Math.atan2(movement.x, movement.z);
          playerGroupRef.current.rotation.y = angle;
       }
     }
-
     if (!isShooting.current) {
       if (movement.x !== 0 || movement.z !== 0) {
         const speed = 8;
         api.applyForce([movement.x * speed, 0, movement.z * speed], [0, 0, 0]);
       }
     }
-
     if (charging) setPower(p => Math.min(p + 2.5, 100));
   });
 
@@ -198,7 +191,6 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
         <mesh rotation={[0,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
         <mesh rotation={[Math.PI/2,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
         
-        {/* パワーメーター */}
         {charging && (
           <Html position={[0, 0.8, 0]} center>
              <div style={{ width: '80px', height: '12px', border: '2px solid white', borderRadius: '6px', background: 'rgba(0,0,0,0.6)', overflow: 'hidden' }}>
@@ -208,18 +200,15 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
         )}
       </mesh>
 
-      {/* 選手モデル（ボールとは別のグループとして管理） */}
+      {/* 選手モデル */}
       <group ref={playerGroupRef}>
-        <PlayerModel 
-          team={team} 
-          isShooting={isShooting.current || charging} 
-        />
+        <PlayerModel team={team} isShooting={isShooting.current || charging} />
       </group>
     </group>
   );
 }
 
-// --- ゴール＆ショットクロック ---
+// --- ゴール ---
 function Hoop({ onScore, team, shotClock }) {
   const [boardRef] = useBox(() => ({ type: 'Static', position: [0, 3.5, -12], args: [1.8, 1.05, 0.1] }));
   
@@ -237,6 +226,7 @@ function Hoop({ onScore, team, shotClock }) {
 
   return (
     <group>
+      {/* 24秒計 */}
       <group position={[0, 4.3, -11.9]}>
         <mesh><boxGeometry args={[0.8, 0.5, 0.1]} /><meshStandardMaterial color="#111" /></mesh>
         <Text position={[0, 0, 0.06]} fontSize={0.25} color={shotClock <= 5 ? "red" : "yellow"} anchorX="center" anchorY="middle">
@@ -256,7 +246,6 @@ function Hoop({ onScore, team, shotClock }) {
       </mesh>
 
       {positions.map((pos, i) => <RimSegment key={i} position={[pos[0], 3.05, -11.6 + pos[2]]} />)}
-      
       <mesh position={[0, 1.75, -12.5]}>
         <cylinderGeometry args={[0.15, 0.15, 3.5]} />
         <meshStandardMaterial color="#222" />
@@ -317,28 +306,34 @@ function CameraController({ target }) {
 
 // --- メインアプリ ---
 export default function App() {
-  // ※ここで不要なStateを削除しました（パフォーマンス改善）
   const [score, setScore] = useState(0);
   const [team, setTeam] = useState(TEAMS.JETS);
   const [showGoalEffect, setShowGoalEffect] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [cameraTarget, setCameraTarget] = useState(null);
+  
+  // タイマー管理
   const [shotClock, setShotClock] = useState(24.0);
-  const lastTimeRef = useRef(Date.now());
   const [isPaused, setIsPaused] = useState(false);
 
-  useFrame(() => {
+  // 【修正】useFrameの代わりにuseEffectを使用（Canvas外でのクラッシュ防止）
+  useEffect(() => {
     if (isPaused) return;
-    const now = Date.now();
-    const delta = (now - lastTimeRef.current) / 1000;
-    lastTimeRef.current = now;
+    const interval = setInterval(() => {
+      setShotClock((prev) => {
+        if (prev <= 0) return 0;
+        return Math.max(0, prev - 0.1);
+      });
+    }, 100);
+    return () => clearInterval(interval);
+  }, [isPaused]);
 
-    if (shotClock > 0) {
-      setShotClock(prev => Math.max(0, prev - delta));
-    } else if (shotClock <= 0 && !isResetting) {
-      handleBuzzerBeater();
+  // ブザービーター判定
+  useEffect(() => {
+    if (shotClock <= 0 && !isResetting && !isPaused) {
+       handleBuzzerBeater();
     }
-  });
+  }, [shotClock]);
 
   const handleBuzzerBeater = () => {
     playSound('buzzer');
@@ -348,7 +343,6 @@ export default function App() {
       setIsResetting(false);
       setShotClock(24.0);
       setIsPaused(false);
-      lastTimeRef.current = Date.now();
     }, 2000);
   };
 
@@ -369,19 +363,21 @@ export default function App() {
         setIsResetting(false);
         setShotClock(24.0);
         setIsPaused(false);
-        lastTimeRef.current = Date.now();
         setCameraTarget(null);
       }, 100);
     }, 2000);
   };
 
   return (
-    <div style={{ width: '100%', height: '100%', background: '#050505', overflow: 'hidden' }}>
+    <div style={{ width: '100%', height: '100%', background: '#222', overflow: 'hidden' }}>
       <Canvas shadows fov={60}>
+        <color attach="background" args={['#222']} /> {/* 背景を少し明るく */}
         <CameraController target={cameraTarget} />
-        <ambientLight intensity={0.4} />
+        
+        {/* 照明を明るく修正 */}
+        <ambientLight intensity={0.7} />
         <spotLight position={[0, 20, 0]} angle={0.6} penumbra={0.5} intensity={1.5} castShadow />
-        <pointLight position={[10, 10, 10]} intensity={0.5} />
+        <pointLight position={[10, 10, 10]} intensity={0.8} />
         <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
         
         <Physics gravity={[0, -9.8, 0]}>
