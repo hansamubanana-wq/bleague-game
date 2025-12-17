@@ -16,7 +16,7 @@ const TEAMS = {
 const BALL_RADIUS = 0.14; 
 const HOOP_RADIUS = 0.35; 
 const BALL_START_POS = [0, 2, 6];
-const HOOP_POSITION = [0, 3.05, -12]; // ゴールの中心座標
+const HOOP_POSITION = [0, 3.05, -12]; 
 
 // --- 音声機能 ---
 const playSound = (type) => {
@@ -65,7 +65,7 @@ function PlayerModel({ team, isShooting, isMoving }) {
 
   useFrame((state) => {
     if (isMoving && !isShooting) {
-      const t = state.clock.elapsedTime * 15; // 歩く速度アップ
+      const t = state.clock.elapsedTime * 15;
       if (leftLeg.current) leftLeg.current.rotation.x = Math.sin(t) * 0.8;
       if (rightLeg.current) rightLeg.current.rotation.x = Math.sin(t + Math.PI) * 0.8;
       if (bodyGroup.current) bodyGroup.current.position.y = Math.abs(Math.sin(t * 2)) * 0.1;
@@ -100,9 +100,9 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
     mass: 1, 
     position: BALL_START_POS, 
     args: [BALL_RADIUS],
-    restitution: 0.6, 
-    friction: 0.1,
-    linearDamping: 0.1, // 空気抵抗を下げる
+    restitution: 0.7, // よく弾む
+    friction: 0.5,
+    linearDamping: 0.0, // 減衰なし（手動制御するため）
     angularDamping: 0.5,
   }));
 
@@ -111,6 +111,10 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
   const [charging, setCharging] = useState(false);
   const [power, setPower] = useState(0);
   const isShooting = useRef(false);
+  
+  // 速度管理用の参照
+  const velocity = useRef([0, 0, 0]);
+  useEffect(() => api.velocity.subscribe((v) => (velocity.current = v)), [api.velocity]);
 
   useEffect(() => {
     if (isResetting) {
@@ -119,6 +123,8 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
       api.angularVelocity.set(0, 0, 0);
       isShooting.current = false;
       setCameraTarget(null);
+      setCharging(false);
+      setPower(0);
     }
   }, [isResetting]);
 
@@ -126,53 +132,57 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
     window.handleMobileMove = (val) => setMovement({ x: val.x || 0, z: val.y ? -val.y : 0 });
     window.handleMobileChargeStart = () => setCharging(true);
     window.handleMobileChargeEnd = () => handleShoot();
-  }, [power]);
+  }, [power]); // power依存は不要だが念のため
 
   const handleShoot = () => {
+    if (isShooting.current) return;
     setCharging(false);
-    const shootPower = Math.min(power, 100) / 100;
     
-    // オートエイム計算
-    if (ref.current && shootPower > 0.1) {
+    // パワーがある程度溜まっていないとキャンセル（誤操作防止）
+    const shootPower = Math.min(power, 100) / 100;
+    if (shootPower < 0.1) {
+      setPower(0);
+      return;
+    }
+
+    if (ref.current) {
       const currentPos = ref.current.position;
       
-      // 目標地点（リングの中心）
+      // 目標（ゴール）
       const tx = HOOP_POSITION[0];
       const ty = HOOP_POSITION[1];
       const tz = HOOP_POSITION[2];
 
-      // 現在地からの距離
+      // 距離計算
       const dx = tx - currentPos.x;
       const dy = ty - currentPos.y;
       const dz = tz - currentPos.z;
-
-      // 滞空時間（距離に応じて調整。遠いほど長く）
-      // 近くで0.8秒、遠くで1.2秒くらいになるような計算
-      const distance = Math.sqrt(dx*dx + dz*dz);
-      const time = 0.8 + (distance * 0.05);
-
-      // 重力加速度 (cannon.jsのデフォルトは通常 -9.8 だが設定依存。ここでは9.8として計算)
+      
+      // XZ平面の距離
+      const distXZ = Math.sqrt(dx * dx + dz * dz);
+      
+      // 滞空時間（距離に応じて調整：遠いほど長く）
+      const time = 0.6 + (distXZ * 0.05);
+      
+      // 重力補正（Cannon.jsの重力に合わせて計算）
       const g = 9.8;
 
-      // 物理投射計算（Projectile Motion）
+      // 必要な初速度を計算
       // 水平速度 = 距離 / 時間
       const vx = dx / time;
       const vz = dz / time;
-
-      // 垂直速度の計算: y = vy * t - 0.5 * g * t^2
-      // 到達時の高さ dy になるための vy を逆算
-      // dy = vy * time - 0.5 * g * time * time
-      // vy = (dy + 0.5 * g * time * time) / time
+      // 垂直速度 = (高さ差 + 0.5 * g * t^2) / t
       const vy = (dy + 0.5 * g * time * time) / time;
 
       playSound('shoot');
       isShooting.current = true;
       setCameraTarget(ref);
 
-      // 計算した速度を適用（これで必ず届く）
+      // 強制的に速度を上書き
       api.velocity.set(vx, vy, vz);
       api.angularVelocity.set(10, 0, 0); // バックスピン
 
+      // 3秒後に操作復帰
       setTimeout(() => {
         isShooting.current = false;
         setCameraTarget(null);
@@ -182,40 +192,35 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
   };
 
   useFrame(() => {
+    // 選手モデルの位置合わせ
     const pos = ref.current?.position;
     if (pos && playerGroupRef.current) {
       playerGroupRef.current.position.set(pos.x, 0, pos.z); 
       
-      // 向きの制御
+      // 向き制御
       if (!isShooting.current && (movement.x !== 0 || movement.z !== 0)) {
          const moveAngle = Math.atan2(movement.x, movement.z);
          playerGroupRef.current.rotation.y = moveAngle;
       } else if (isShooting.current) {
-        // シュート中はゴールの方を向く
-        const dx = HOOP_POSITION[0] - pos.x;
-        const dz = HOOP_POSITION[2] - pos.z;
-        playerGroupRef.current.rotation.y = Math.atan2(dx, dz);
+         const dx = HOOP_POSITION[0] - pos.x;
+         const dz = HOOP_POSITION[2] - pos.z;
+         playerGroupRef.current.rotation.y = Math.atan2(dx, dz);
       }
     }
 
-    // 【修正】移動処理：力を加える(applyForce)のではなく、速度を直接上書き(velocity.set)する
-    // これにより摩擦に関係なく「スティックを倒せば必ず動く」挙動になる
+    // 移動処理（最重要修正箇所）
     if (!isShooting.current) {
       if (movement.x !== 0 || movement.z !== 0) {
-        const speed = 6; // 移動速度（メートル/秒）
-        // 現在のY速度（重力落下）は維持したいので取得する必要があるが、
-        // 簡易的にYは「跳ねない限り0に近い」と仮定してセット、
-        // または velocity.subscribe を使うのが正攻法だが、
-        // ここでは applyForce だと弱いので、摩擦に打ち勝つ強い力を毎フレーム与える方式に変更
-        
-        // 速度上書き方式をやめて、超強力な移動フォースに変更（物理挙動を壊さないため）
-        const moveForce = 50; // 前回の2.5倍
-        api.applyForce([movement.x * moveForce, 0, movement.z * moveForce], [0, 0, 0]);
-        
-        // 速度制限（加速しすぎないように）
-        // 本来は velocity を監視すべきだが、簡易的に damping で抑える
+        // 入力がある場合：速度を直接セットして動かす（これで確実に動く）
+        const speed = 6; 
+        // Y軸の速度（重力落下）は維持する
+        api.velocity.set(movement.x * speed, velocity.current[1], movement.z * speed);
+      } else {
+        // 入力がない場合：摩擦で止める（XとZだけ減速）
+        api.velocity.set(velocity.current[0] * 0.9, velocity.current[1], velocity.current[2] * 0.9);
       }
     }
+
     if (charging) setPower(p => Math.min(p + 2.5, 100));
   });
 
