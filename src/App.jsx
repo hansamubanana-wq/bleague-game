@@ -6,11 +6,11 @@ import { Joystick } from 'react-joystick-component';
 import confetti from 'canvas-confetti';
 import * as THREE from 'three';
 
-// --- Bリーグ風チーム設定 ---
+// --- 設定値 ---
 const TEAMS = {
-  JETS: { name: 'JETS RED', primary: '#e60012', secondary: '#ffffff', floor: '#e0c090', border: '#e60012' },
-  KINGS: { name: 'KINGS GOLD', primary: '#d4af37', secondary: '#002b5c', floor: '#e0c090', border: '#002b5c' },
-  ALVARK: { name: 'ALVARK BLACK', primary: '#000000', secondary: '#c41230', floor: '#333333', border: '#c41230' },
+  JETS: { name: 'JETS RED', primary: '#e60012', secondary: '#ffffff', floor: '#e0c090', border: '#e60012', skin: '#ffdbac' },
+  KINGS: { name: 'KINGS GOLD', primary: '#d4af37', secondary: '#002b5c', floor: '#e0c090', border: '#002b5c', skin: '#8d5524' },
+  ALVARK: { name: 'ALVARK BLACK', primary: '#000000', secondary: '#c41230', floor: '#333333', border: '#c41230', skin: '#e0ac69' },
 };
 
 const BALL_RADIUS = 0.14; 
@@ -43,7 +43,6 @@ const playSound = (type) => {
     gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
     osc.start(now); osc.stop(now + 0.5);
   } else if (type === 'buzzer') {
-    // 24秒バイオレーションのブザー
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(100, now);
     osc.frequency.linearRampToValueAtTime(80, now + 1.0);
@@ -51,7 +50,6 @@ const playSound = (type) => {
     gain.gain.linearRampToValueAtTime(0.01, now + 1.0);
     osc.start(now); osc.stop(now + 1.0);
   } else if (type === 'rim') {
-    // リングに当たった音
     osc.type = 'square';
     osc.frequency.setValueAtTime(150, now);
     gain.gain.setValueAtTime(0.5, now);
@@ -60,16 +58,81 @@ const playSound = (type) => {
   }
 };
 
-// --- ボール（モルテン風カラー） ---
-function PlayerBall({ setBallPos, isResetting, setCameraTarget, resetShotClock }) {
+// --- 選手モデル（見た目のみ） ---
+function PlayerModel({ position, rotation, team, isShooting }) {
+  // 簡易的なブロック人間
+  // positionはボールの位置。そこから少しずらして描画する
+  return (
+    <group position={position} rotation={[0, rotation, 0]}>
+      <group position={[0, 0, 0.4]}> {/* ボールの後ろ(0.4m)に配置 */}
+        {/* 胴体 */}
+        <mesh position={[0, 0.9, 0]} castShadow>
+          <boxGeometry args={[0.5, 0.6, 0.25]} />
+          <meshStandardMaterial color={team.primary} />
+        </mesh>
+        {/* ゼッケン */}
+        <Text position={[0, 0.9, -0.13]} rotation={[0, Math.PI, 0]} fontSize={0.3} color={team.secondary}>
+          23
+        </Text>
+        {/* 頭 */}
+        <mesh position={[0, 1.45, 0]} castShadow>
+          <boxGeometry args={[0.25, 0.3, 0.25]} />
+          <meshStandardMaterial color={team.skin} />
+        </mesh>
+        {/* 右腕（シュート時に上がる） */}
+        <mesh 
+          position={[0.3, isShooting ? 1.4 : 0.9, 0.1]} 
+          rotation={[isShooting ? Math.PI : 0, 0, 0]}
+          castShadow
+        >
+          <boxGeometry args={[0.12, 0.5, 0.12]} />
+          <meshStandardMaterial color={team.skin} />
+        </mesh>
+        {/* 左腕 */}
+        <mesh position={[-0.3, 0.9, 0]} castShadow>
+          <boxGeometry args={[0.12, 0.5, 0.12]} />
+          <meshStandardMaterial color={team.skin} />
+        </mesh>
+        {/* パンツ */}
+        <mesh position={[0, 0.5, 0]}>
+          <boxGeometry args={[0.52, 0.3, 0.26]} />
+          <meshStandardMaterial color={team.secondary} />
+        </mesh>
+        {/* 足 */}
+        <mesh position={[-0.15, 0.15, 0]}>
+          <boxGeometry args={[0.15, 0.4, 0.15]} />
+          <meshStandardMaterial color="#333" />
+        </mesh>
+        <mesh position={[0.15, 0.15, 0]}>
+          <boxGeometry args={[0.15, 0.4, 0.15]} />
+          <meshStandardMaterial color="#333" />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+// --- ボール＆プレイヤー制御 ---
+function PlayerBall({ setBallPos, isResetting, setCameraTarget, team }) {
   const [ref, api] = useSphere(() => ({
-    mass: 1, position: BALL_START_POS, args: [BALL_RADIUS],
-    restitution: 0.7, friction: 0.2, linearDamping: 0.1, angularDamping: 0.5,
+    mass: 1, 
+    position: BALL_START_POS, 
+    args: [BALL_RADIUS],
+    restitution: 0.7, 
+    friction: 0.8, // 滑り防止：摩擦をアップ
+    linearDamping: 0.5, // 滑り防止：空気抵抗をアップ（すぐ止まる）
+    angularDamping: 0.5,
   }));
+
   const [movement, setMovement] = useState({ x: 0, z: 0 });
   const [charging, setCharging] = useState(false);
   const [power, setPower] = useState(0);
   const isShooting = useRef(false);
+  
+  // プレイヤーの向き（ラジアン）
+  const [playerRotation, setPlayerRotation] = useState(0);
+  // プレイヤー描画用の位置（ボールの位置をステートに保存して追従させる）
+  const [visualPos, setVisualPos] = useState([0,0,0]);
 
   useEffect(() => {
     if (isResetting) {
@@ -90,47 +153,81 @@ function PlayerBall({ setBallPos, isResetting, setCameraTarget, resetShotClock }
   const handleShoot = () => {
     setCharging(false);
     const shootPower = Math.min(power, 100) / 100;
+    
+    // パワーが弱すぎる場合はシュートキャンセル
     if (shootPower > 0.1) {
       playSound('shoot');
       isShooting.current = true;
       setCameraTarget(ref);
+
+      // シュート物理演算
       const forwardForce = 3 + (shootPower * 11);
       const upForce = 5 + (shootPower * 8);
       api.velocity.set(0, upForce, -forwardForce);
       api.angularVelocity.set(15, 0, 0);
+
+      // 【修正】3秒後に強制的に移動可能に戻す（外しても動けるように）
+      setTimeout(() => {
+        isShooting.current = false;
+        setCameraTarget(null);
+      }, 3000);
     }
     setPower(0);
   };
 
   useFrame(() => {
+    // 座標取得
+    const pos = ref.current?.position;
+
+    if (pos) {
+       // プレイヤーモデルの表示位置更新（yは0固定で地面に立たせる）
+       setVisualPos([pos.x, 0, pos.z]);
+       // カメラ追従用
+       setBallPos([pos.x, pos.y, pos.z]);
+    }
+
+    // 移動処理
     if (!isShooting.current) {
       if (movement.x !== 0 || movement.z !== 0) {
-        const speed = 15;
+        const speed = 8; // 【修正】速度を落として操作しやすく
         api.applyForce([movement.x * speed, 0, movement.z * speed], [0, 0, 0]);
+        
+        // 移動方向に向きを変える
+        const angle = Math.atan2(movement.x, movement.z);
+        setPlayerRotation(angle);
       }
     }
+
     if (charging) setPower(p => Math.min(p + 2.5, 100));
-    const pos = ref.current?.position;
-    if(pos) setBallPos([pos.x, pos.y, pos.z]);
   });
 
   return (
-    <mesh ref={ref} castShadow>
-      <sphereGeometry args={[BALL_RADIUS, 32, 32]} />
-      {/* モルテン風：少し茶色がかったオレンジ */}
-      <meshStandardMaterial color="#d65a18" roughness={0.2} metalness={0.1} />
-      {/* 簡易的なライン表現 */}
-      <mesh rotation={[0,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
-      <mesh rotation={[Math.PI/2,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
+    <group>
+      {/* 物理ボール */}
+      <mesh ref={ref} castShadow>
+        <sphereGeometry args={[BALL_RADIUS, 32, 32]} />
+        <meshStandardMaterial color="#d65a18" roughness={0.2} metalness={0.1} />
+        <mesh rotation={[0,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
+        <mesh rotation={[Math.PI/2,0,0]}><torusGeometry args={[BALL_RADIUS, 0.005, 16, 32]} /><meshBasicMaterial color="#f0e68c"/></mesh>
+        
+        {/* パワーメーター */}
+        {charging && (
+          <Html position={[0, 0.8, 0]} center>
+             <div style={{ width: '80px', height: '12px', border: '2px solid white', borderRadius: '6px', background: 'rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+               <div style={{ width: `${power}%`, height: '100%', background: `linear-gradient(90deg, limegreen, yellow, red)` }} />
+             </div>
+          </Html>
+        )}
+      </mesh>
 
-      {charging && (
-        <Html position={[0, 0.5, 0]} center>
-           <div style={{ width: '80px', height: '12px', border: '2px solid white', borderRadius: '6px', background: 'rgba(0,0,0,0.6)', overflow: 'hidden' }}>
-             <div style={{ width: `${power}%`, height: '100%', background: `linear-gradient(90deg, limegreen, yellow, red)` }} />
-           </div>
-        </Html>
-      )}
-    </mesh>
+      {/* 選手モデル（ボールには追従するが、物理演算の影響は受けない） */}
+      <PlayerModel 
+        position={visualPos} 
+        rotation={playerRotation} 
+        team={team} 
+        isShooting={isShooting.current || charging} // チャージ中かシュート中は腕を上げる
+      />
+    </group>
   );
 }
 
@@ -138,13 +235,11 @@ function PlayerBall({ setBallPos, isResetting, setCameraTarget, resetShotClock }
 function Hoop({ onScore, team, shotClock }) {
   const [boardRef] = useBox(() => ({ type: 'Static', position: [0, 3.5, -12], args: [1.8, 1.05, 0.1] }));
   
-  // センサー
   useCylinder(() => ({
     isTrigger: true, args: [0.25, 0.25, 0.1, 8], position: [0, 2.8, -11.6],
     onCollide: (e) => { if (e.body.name !== 'sensor') onScore(); }
   }));
 
-  // リング（16分割）
   const segmentCount = 16;
   const positions = [];
   for (let i = 0; i < segmentCount; i++) {
@@ -154,24 +249,16 @@ function Hoop({ onScore, team, shotClock }) {
 
   return (
     <group>
-      {/* ショットクロック表示板 */}
       <group position={[0, 4.3, -11.9]}>
-        <mesh>
-          <boxGeometry args={[0.8, 0.5, 0.1]} />
-          <meshStandardMaterial color="#111" />
-        </mesh>
+        <mesh><boxGeometry args={[0.8, 0.5, 0.1]} /><meshStandardMaterial color="#111" /></mesh>
         <Text position={[0, 0, 0.06]} fontSize={0.25} color={shotClock <= 5 ? "red" : "yellow"} anchorX="center" anchorY="middle">
           {Math.ceil(shotClock)}
-        </Text>
-        <Text position={[0, 0.15, 0.06]} fontSize={0.08} color="white" anchorX="center" anchorY="middle">
-          SHOT CLOCK
         </Text>
       </group>
 
       <mesh ref={boardRef} castShadow receiveShadow>
         <boxGeometry args={[1.8, 1.05, 0.1]} />
         <meshStandardMaterial color="white" />
-        {/* ボードの枠線をチームカラーに */}
         <mesh position={[0, -0.35, 0.06]}><boxGeometry args={[0.59, 0.45, 0.01]} /><meshBasicMaterial color={team.primary} /></mesh>
       </mesh>
       
@@ -191,17 +278,11 @@ function Hoop({ onScore, team, shotClock }) {
 }
 
 function RimSegment({ position }) { 
-  useBox(() => ({ 
-    type: 'Static', position, args: [0.05, 0.05, 0.05],
-    onCollide: () => {
-       // リングに当たったら音を鳴らす
-       playSound('rim');
-    }
-  })); 
+  useBox(() => ({ type: 'Static', position, args: [0.05, 0.05, 0.05], onCollide: () => playSound('rim') })); 
   return null; 
 }
 
-// --- コート（チームカラー対応） ---
+// --- コート ---
 function Court({ team }) {
   usePlane(() => ({ rotation: [-Math.PI / 2, 0, 0], position: [0, 0, 0], material: { friction: 0.1 } }));
   return (
@@ -210,7 +291,6 @@ function Court({ team }) {
         <planeGeometry args={[15, 28]} />
         <meshStandardMaterial color={team.floor} />
       </mesh>
-      {/* ライン */}
       <group position={[0, 0.01, 0]}>
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -7]}>
            <ringGeometry args={[6.75, 6.85, 64, 1, Math.PI, Math.PI]} />
@@ -218,11 +298,11 @@ function Court({ team }) {
         </mesh>
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -9.1]}>
            <planeGeometry args={[4.9, 5.8]} />
-           <meshBasicMaterial color={team.primary} /> {/* ペイントエリアをチームカラーに */}
+           <meshBasicMaterial color={team.primary} /> 
         </mesh>
         <mesh rotation={[-Math.PI / 0.5, 0, 0]} position={[0, 0, -14]}>
             <planeGeometry args={[15, 2]} />
-            <meshBasicMaterial color={team.border} /> {/* エンドライン外側をチームカラーに */}
+            <meshBasicMaterial color={team.border} /> 
         </mesh>
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
            <ringGeometry args={[1.7, 1.8, 64]} />
@@ -251,17 +331,14 @@ function CameraController({ target }) {
 export default function App() {
   const [ballPos, setBallPos] = useState(BALL_START_POS);
   const [score, setScore] = useState(0);
-  const [team, setTeam] = useState(TEAMS.JETS); // 初期チーム
+  const [team, setTeam] = useState(TEAMS.JETS);
   const [showGoalEffect, setShowGoalEffect] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [cameraTarget, setCameraTarget] = useState(null);
-  
-  // ショットクロック管理
   const [shotClock, setShotClock] = useState(24.0);
   const lastTimeRef = useRef(Date.now());
   const [isPaused, setIsPaused] = useState(false);
 
-  // 24秒タイマー処理
   useFrame(() => {
     if (isPaused) return;
     const now = Date.now();
@@ -271,7 +348,6 @@ export default function App() {
     if (shotClock > 0) {
       setShotClock(prev => Math.max(0, prev - delta));
     } else if (shotClock <= 0 && !isResetting) {
-      // タイムオーバー！
       handleBuzzerBeater();
     }
   });
@@ -279,7 +355,7 @@ export default function App() {
   const handleBuzzerBeater = () => {
     playSound('buzzer');
     setIsPaused(true);
-    setIsResetting(true); // ボール没収
+    setIsResetting(true);
     setTimeout(() => {
       setIsResetting(false);
       setShotClock(24.0);
@@ -294,17 +370,16 @@ export default function App() {
     setShowGoalEffect(true);
     confetti({ 
       particleCount: 200, spread: 80, 
-      colors: [team.primary, team.secondary, '#ffffff'] // チームカラーの紙吹雪
+      colors: [team.primary, team.secondary, '#ffffff'] 
     });
 
-    // ゴール後は時間を止めてリセット
     setIsPaused(true);
     setTimeout(() => {
       setShowGoalEffect(false);
       setIsResetting(true);
       setTimeout(() => {
         setIsResetting(false);
-        setShotClock(24.0); // 24秒リセット
+        setShotClock(24.0);
         setIsPaused(false);
         lastTimeRef.current = Date.now();
         setCameraTarget(null);
@@ -317,8 +392,6 @@ export default function App() {
       <Canvas shadows fov={60}>
         <CameraController target={cameraTarget} />
         <ambientLight intensity={0.4} />
-        
-        {/* Bリーグアリーナ風の照明（スポットライト強め） */}
         <spotLight position={[0, 20, 0]} angle={0.6} penumbra={0.5} intensity={1.5} castShadow />
         <pointLight position={[10, 10, 10]} intensity={0.5} />
         <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
@@ -326,11 +399,10 @@ export default function App() {
         <Physics gravity={[0, -9.8, 0]}>
           <Court team={team} />
           <Hoop onScore={handleScore} team={team} shotClock={shotClock} />
-          <PlayerBall setBallPos={setBallPos} isResetting={isResetting} setCameraTarget={setCameraTarget} />
+          <PlayerBall setBallPos={setBallPos} isResetting={isResetting} setCameraTarget={setCameraTarget} team={team} />
         </Physics>
       </Canvas>
       
-      {/* チーム選択ボタン（右上） */}
       <div style={{ position: 'absolute', top: 20, right: 20, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {Object.keys(TEAMS).map((key) => (
           <button 
@@ -347,7 +419,6 @@ export default function App() {
         ))}
       </div>
 
-      {/* スコアボード（チームカラー連動） */}
       <div style={{
         position: 'absolute', top: 20, width: '100%', textAlign: 'center', pointerEvents: 'none',
         color: 'white', textShadow: '2px 2px 0 #000'
@@ -357,13 +428,10 @@ export default function App() {
           display:'inline-block', padding:'10px 40px', borderRadius:'0 0 20px 20px', border:'2px solid white'
         }}>
           <h2 style={{ margin:0, fontSize:'1rem', letterSpacing:'2px'}}>{team.name}</h2>
-          <h1 style={{ fontSize: '3.5rem', margin: 0, fontFamily: 'Impact' }}>
-            {score}
-          </h1>
+          <h1 style={{ fontSize: '3.5rem', margin: 0, fontFamily: 'Impact' }}>{score}</h1>
         </div>
       </div>
 
-      {/* バイオレーション表示 */}
       {shotClock <= 0 && (
         <div style={{
           position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none',
@@ -373,7 +441,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ゴール演出 */}
       {showGoalEffect && (
         <div style={{
           position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none',
@@ -383,7 +450,6 @@ export default function App() {
         </div>
       )}
       
-      {/* 操作UI */}
       <div style={{ position: 'absolute', bottom: 30, left: 30, zIndex: 10 }}>
         <Joystick 
           size={100} 
