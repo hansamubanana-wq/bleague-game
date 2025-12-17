@@ -1,278 +1,370 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Physics, usePlane, useSphere, useBox, useCylinder } from '@react-three/cannon';
-import { OrbitControls, Stars, Sky, Html } from '@react-three/drei';
+import { OrbitControls, Stars, Sky, Html, Float } from '@react-three/drei';
 import { Joystick } from 'react-joystick-component';
 import confetti from 'canvas-confetti';
+import * as THREE from 'three';
 
-// --- 設定値 ---
-const BALL_START_POS = [0, 2, 6]; // スタート位置
-const HOOP_POS = [0, 3.05, -12];  // ゴール位置
+// --- 設定値（アーケードライクな調整） ---
+const BALL_RADIUS = 0.14; // リアルより少しだけ大きくして視認性確保（穴には入る）
+const HOOP_RADIUS = 0.35; // リングを少し広げて入れやすくする
+const BALL_START_POS = [0, 2, 6];
 
-// --- コンポーネント: プレイヤーボール ---
-function PlayerBall({ setBallPos, isResetting }) {
+// --- 音声シンセサイザー（外部ファイル不要で音を鳴らす） ---
+const playSound = (type) => {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  const now = ctx.currentTime;
+  if (type === 'shoot') {
+    // シュート音：高い音から低い音へ（ヒュッ）
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+    gain.gain.setValueAtTime(0.5, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+    osc.start(now);
+    osc.stop(now + 0.3);
+  } else if (type === 'goal') {
+    // ゴール音：和音っぽいキラキラ音
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.linearRampToValueAtTime(1200, now + 0.1);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    osc.start(now);
+    osc.stop(now + 0.5);
+    // 重低音バスドラム
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.frequency.setValueAtTime(150, now);
+    osc2.frequency.exponentialRampToValueAtTime(0.01, now + 0.5);
+    gain2.gain.setValueAtTime(0.8, now);
+    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    osc2.start(now);
+    osc2.stop(now + 0.5);
+  }
+};
+
+// --- パーティクルシステム（炎のエフェクト） ---
+function FireParticles({ position }) {
+  const count = 50;
+  const mesh = useRef();
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const particles = useMemo(() => {
+    return new Array(count).fill(0).map(() => ({
+      position: [Math.random() - 0.5, Math.random() * 2, Math.random() - 0.5],
+      speed: Math.random() * 0.05 + 0.02,
+      offset: Math.random() * 100
+    }));
+  }, []);
+
+  useFrame((state) => {
+    particles.forEach((particle, i) => {
+      let { position, speed, offset } = particle;
+      // 上昇アニメーション
+      position[1] += speed;
+      if (position[1] > 2) position[1] = 0; // ループ
+      
+      dummy.position.set(
+        position[0] * 0.5 + Math.sin(state.clock.elapsedTime + offset) * 0.1,
+        position[1],
+        position[2] * 0.5 + Math.cos(state.clock.elapsedTime + offset) * 0.1
+      );
+      dummy.scale.setScalar(Math.max(0, 1 - position[1] / 2)); // 上に行くほど小さく
+      dummy.updateMatrix();
+      mesh.current.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={mesh} args={[null, null, count]} position={position}>
+      <planeGeometry args={[0.2, 0.2]} />
+      <meshBasicMaterial color="#00ffff" blending={THREE.AdditiveBlending} depthWrite={false} transparent opacity={0.6} />
+    </instancedMesh>
+  );
+}
+
+// --- プレイヤーボール ---
+function PlayerBall({ setBallPos, isResetting, setCameraTarget }) {
   const [ref, api] = useSphere(() => ({
     mass: 1,
     position: BALL_START_POS,
-    args: [0.24],
-    restitution: 0.8,
-    friction: 0.1,
-    linearDamping: 0.5,
+    args: [BALL_RADIUS],
+    restitution: 0.7, // 少し弾みにくくして制御しやすく
+    friction: 0.2,
+    linearDamping: 0.1,
+    angularDamping: 0.5,
   }));
 
   const [movement, setMovement] = useState({ x: 0, z: 0 });
   const [charging, setCharging] = useState(false);
   const [power, setPower] = useState(0);
+  const isShooting = useRef(false);
 
-  // リセット信号を受け取ったら位置を戻す
   useEffect(() => {
     if (isResetting) {
       api.position.set(...BALL_START_POS);
       api.velocity.set(0, 0, 0);
       api.angularVelocity.set(0, 0, 0);
+      isShooting.current = false;
+      setCameraTarget(null); // カメラリセット
     }
   }, [isResetting]);
 
-  // キーボード操作
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'w') setMovement(m => ({ ...m, z: -1 }));
-      if (e.key === 's') setMovement(m => ({ ...m, z: 1 }));
-      if (e.key === 'a') setMovement(m => ({ ...m, x: -1 }));
-      if (e.key === 'd') setMovement(m => ({ ...m, x: 1 }));
-      if (e.code === 'Space') setCharging(true);
-    };
-    const handleKeyUp = (e) => {
-      if (['w', 's'].includes(e.key)) setMovement(m => ({ ...m, z: 0 }));
-      if (['a', 'd'].includes(e.key)) setMovement(m => ({ ...m, x: 0 }));
-      if (e.code === 'Space') handleShoot();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [power]);
-
-  // スマホ操作連携
-  useEffect(() => {
-    window.handleMobileMove = (val) => {
-      setMovement({ x: val.x || 0, z: val.y ? -val.y : 0 });
-    };
+    window.handleMobileMove = (val) => setMovement({ x: val.x || 0, z: val.y ? -val.y : 0 });
     window.handleMobileChargeStart = () => setCharging(true);
     window.handleMobileChargeEnd = () => handleShoot();
   }, [power]);
 
   const handleShoot = () => {
     setCharging(false);
-    const shootPower = Math.min(power, 100) / 100; 
-    const forwardForce = 5 + (shootPower * 12);
-    const upForce = 5 + (shootPower * 9);
-
+    const shootPower = Math.min(power, 100) / 100;
+    
     if (shootPower > 0.1) {
+      playSound('shoot'); // 音を鳴らす
+      isShooting.current = true;
+      setCameraTarget(ref); // カメラをボール追従モードに
+
+      // 物理演算：斜め上への爆発的な力
+      const forwardForce = 3 + (shootPower * 11); // 前への力（調整済み）
+      const upForce = 5 + (shootPower * 8);       // 上への力
+      
       api.velocity.set(0, upForce, -forwardForce);
-      api.angularVelocity.set(10, 0, 0);
+      api.angularVelocity.set(15, 0, 0); // 強烈なバックスピン
     }
     setPower(0);
   };
 
   useFrame(() => {
-    if (movement.x !== 0 || movement.z !== 0) {
-      const speed = 10;
-      api.applyForce([movement.x * speed, 0, movement.z * speed], [0, 0, 0]);
+    // シュートしていない時だけ移動可能
+    if (!isShooting.current) {
+      if (movement.x !== 0 || movement.z !== 0) {
+        const speed = 15;
+        api.applyForce([movement.x * speed, 0, movement.z * speed], [0, 0, 0]);
+      }
+      // 強制的に地面近くに留める（ドリブル感）
+      // api.position.subscribe(p => { if(p[1] > 2) api.position.set(p[0], 2, p[2]) }); 
     }
-    if (charging) {
-      setPower((prev) => Math.min(prev + 2, 100));
-    }
-    // カメラ追従用座標更新
+
+    if (charging) setPower(p => Math.min(p + 2.5, 100)); // チャージ速度アップ
+    
     const pos = ref.current?.position;
     if(pos) setBallPos([pos.x, pos.y, pos.z]);
   });
 
   return (
     <mesh ref={ref} castShadow>
-      <sphereGeometry args={[0.24, 32, 32]} />
-      <meshStandardMaterial color="#e65100" roughness={0.4} />
-      <mesh rotation={[0,0,0]}><torusGeometry args={[0.24, 0.005, 16, 32]} /><meshBasicMaterial color="black"/></mesh>
+      <sphereGeometry args={[BALL_RADIUS, 32, 32]} />
+      <meshStandardMaterial color="#e65100" roughness={0.2} metalness={0.1} />
+      <mesh rotation={[0,0,0]}><torusGeometry args={[BALL_RADIUS, 0.008, 16, 32]} /><meshBasicMaterial color="black"/></mesh>
       
       {charging && (
-        <Html position={[0, 0.8, 0]} center>
-          <div style={{ width: '60px', height: '10px', border: '1px solid white', background: 'rgba(0,0,0,0.5)' }}>
-            <div style={{ width: `${power}%`, height: '100%', background: power > 80 ? 'red' : 'limegreen' }} />
-          </div>
+        <Html position={[0, 0.5, 0]} center>
+           <div style={{
+             width: '80px', height: '12px', border: '2px solid white', 
+             borderRadius: '6px', background: 'rgba(0,0,0,0.6)', overflow: 'hidden'
+           }}>
+             <div style={{
+               width: `${power}%`, height: '100%', 
+               background: `linear-gradient(90deg, limegreen, yellow, red)`,
+               transition: 'width 0.05s linear'
+             }} />
+           </div>
+           {power > 90 && <div style={{color:'red', fontWeight:'bold', fontSize:'12px', textAlign:'center'}}>MAX!</div>}
         </Html>
       )}
     </mesh>
   );
 }
 
-// --- ゴール判定用センサー ---
-function NetSensor({ onScore }) {
-  // リングの少し下に「見えない円柱」を配置し、触れたらゴールとみなす
-  const [ref] = useCylinder(() => ({
-    isTrigger: true, // 物理衝突せず、通り抜ける
-    args: [0.2, 0.2, 0.1, 8], // 半径, 半径, 高さ, 分割
-    position: [0, 2.9, -11.6], // リングの真下
-    onCollide: (e) => {
-      // ボールだけを感知
-      if (e.body.name !== 'sensor') {
-        onScore();
-      }
-    }
-  }));
-  return null; // 見えないので描画なし
-}
-
-// --- コンポーネント: ゴール ---
-function Hoop({ onScore }) {
+// --- センサー＆ゴール ---
+function Hoop({ onScore, isOnFire }) {
   const [boardRef] = useBox(() => ({ type: 'Static', position: [0, 3.5, -12], args: [1.8, 1.05, 0.1] }));
-  const RIM_RADIUS = 0.45 / 2;
+  
+  // センサー：リングの少し下
+  useCylinder(() => ({
+    isTrigger: true, args: [0.25, 0.25, 0.1, 8], position: [0, 2.8, -11.6],
+    onCollide: (e) => { if (e.body.name !== 'sensor') onScore(); }
+  }));
+
+  // リングの物理衝突（16個のブロックで円を作る）
   const segmentCount = 16;
   const positions = [];
   for (let i = 0; i < segmentCount; i++) {
     const angle = (i / segmentCount) * Math.PI * 2;
-    positions.push([Math.cos(angle) * RIM_RADIUS, 0, Math.sin(angle) * RIM_RADIUS]);
+    positions.push([Math.cos(angle) * HOOP_RADIUS, 0, Math.sin(angle) * HOOP_RADIUS]);
   }
 
   return (
     <group>
-      <NetSensor onScore={onScore} />
-      
+      {/* 燃える演出 */}
+      {isOnFire && <FireParticles position={[0, 3.05, -11.6]} />}
+
       <mesh ref={boardRef} castShadow receiveShadow>
         <boxGeometry args={[1.8, 1.05, 0.1]} />
-        <meshStandardMaterial color="white" />
-        <mesh position={[0, -0.35, 0.06]}><boxGeometry args={[0.59, 0.45, 0.01]} /><meshBasicMaterial color="red" /></mesh>
+        <meshStandardMaterial color={isOnFire ? "#333" : "white"} />
+        <mesh position={[0, -0.35, 0.06]}><boxGeometry args={[0.59, 0.45, 0.01]} /><meshBasicMaterial color={isOnFire ? "#00ffff" : "red"} /></mesh>
       </mesh>
       
-      {/* リング（見た目） */}
+      {/* リング見た目 */}
       <mesh position={[0, 3.05, -11.6]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[RIM_RADIUS, 0.02, 16, 32]} />
-        <meshStandardMaterial color="orange" />
+        <torusGeometry args={[HOOP_RADIUS, 0.02, 16, 32]} />
+        <meshStandardMaterial color={isOnFire ? "#00ffff" : "orange"} emissive={isOnFire ? "#00aaaa" : "black"} />
       </mesh>
-      
-      {/* リング（物理） */}
+
+      {/* リング物理壁 */}
       {positions.map((pos, i) => <RimSegment key={i} position={[pos[0], 3.05, -11.6 + pos[2]]} />)}
       
       {/* 支柱 */}
       <mesh position={[0, 1.75, -12.5]}>
-        <cylinderGeometry args={[0.1, 0.1, 3.5]} />
-        <meshStandardMaterial color="#333" />
+        <cylinderGeometry args={[0.15, 0.15, 3.5]} />
+        <meshStandardMaterial color="#222" />
       </mesh>
     </group>
   );
 }
 function RimSegment({ position }) { useBox(() => ({ type: 'Static', position, args: [0.05, 0.05, 0.05] })); return null; }
 
-// --- コンポーネント: コート（修正版） ---
+// --- コート ---
 function Court() {
-  // 物理演算用の床
-  usePlane(() => ({
-    rotation: [-Math.PI / 2, 0, 0],
-    position: [0, 0, 0],
-    material: { friction: 0.1 }
-  }));
-
+  usePlane(() => ({ rotation: [-Math.PI / 2, 0, 0], position: [0, 0, 0], material: { friction: 0.1 } }));
   return (
     <group>
-      {/* 見た目用の床 */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[15, 28]} />
-        <meshStandardMaterial color="#d2b48c" />
+        <meshStandardMaterial color="#e0c090" />
       </mesh>
-      
-      {/* 修正ポイント: ラインを y=0.01 に浮かせて表示 */}
-      {/* 3ポイントライン */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, -7]}>
-         <ringGeometry args={[6.75, 6.85, 64, 1, Math.PI, Math.PI]} />
-         <meshBasicMaterial color="white" side={2} />
-      </mesh>
-      
-      {/* キー（制限区域） */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, -9.1]}>
-         <planeGeometry args={[4.9, 5.8]} />
-         <meshBasicMaterial color="#a0522d" />{/* ペイントエリアの色 */}
-      </mesh>
-      
-      {/* センターサークル */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-         <ringGeometry args={[1.7, 1.8, 64]} />
-         <meshBasicMaterial color="white" />
-      </mesh>
+      {/* ライン（浮かせ処理済み） */}
+      <group position={[0, 0.01, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -7]}>
+           <ringGeometry args={[6.75, 6.85, 64, 1, Math.PI, Math.PI]} />
+           <meshBasicMaterial color="white" side={2} />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -9.1]}>
+           <planeGeometry args={[4.9, 5.8]} />
+           <meshBasicMaterial color="#a03000" />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+           <ringGeometry args={[1.7, 1.8, 64]} />
+           <meshBasicMaterial color="white" />
+        </mesh>
+      </group>
     </group>
   );
+}
+
+// --- カメラ制御 ---
+function CameraController({ target }) {
+  useFrame((state) => {
+    if (target && target.current) {
+      // ターゲット（ボール）を追う
+      const t = target.current.position;
+      state.camera.lookAt(t.x, t.y, t.z);
+      // カメラ位置も少し近づける（簡易的）
+      state.camera.position.lerp(new THREE.Vector3(t.x, t.y + 3, t.z + 6), 0.05);
+    } else {
+      // 通常時
+      state.camera.position.lerp(new THREE.Vector3(0, 8, 15), 0.05);
+      state.camera.lookAt(0, 2, -5);
+    }
+  });
+  return null;
 }
 
 // --- メインアプリ ---
 export default function App() {
   const [ballPos, setBallPos] = useState(BALL_START_POS);
   const [score, setScore] = useState(0);
+  const [combo, setCombo] = useState(0);
   const [showGoalEffect, setShowGoalEffect] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const lastScoreTime = useRef(0); // 連続ゴール防止用
+  const [cameraTarget, setCameraTarget] = useState(null);
+  const lastScoreTime = useRef(0);
 
-  // ゴール時の処理
+  // コンボ（On Fire）判定
+  const isOnFire = combo >= 2;
+
   const handleScore = () => {
     const now = Date.now();
-    if (now - lastScoreTime.current < 2000) return; // 2秒以内の連続検知は無視
+    if (now - lastScoreTime.current < 2000) return;
     lastScoreTime.current = now;
 
-    // スコア加算
-    setScore(s => s + 2);
+    playSound('goal'); // 音！
+
+    // スコア計算（コンボボーナス）
+    const points = isOnFire ? 4 : 2;
+    setScore(s => s + points);
+    setCombo(c => c + 1);
     setShowGoalEffect(true);
 
-    // 紙吹雪エフェクト発動！
+    // 紙吹雪
     confetti({
-      particleCount: 150,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#ff0000', '#ffffff', '#000000'] // Bリーグっぽい色
+      particleCount: isOnFire ? 300 : 100,
+      spread: isOnFire ? 150 : 70,
+      colors: isOnFire ? ['#00ffff', '#ffffff'] : ['#ff0000', '#ffffff', '#000000']
     });
 
-    // 2秒後に演出を消してボールをリセット
     setTimeout(() => {
       setShowGoalEffect(false);
       setIsResetting(true);
-      setTimeout(() => setIsResetting(false), 100); // フラグを戻す
-    }, 2000);
+      setTimeout(() => setIsResetting(false), 100);
+    }, 2500);
   };
 
+  // 外した時のコンボリセット（簡易判定：ボールが手前に戻ってきたらリセット）
+  // ※今回は厳密にやると難しいので、リセット時にコンボ継続時間をチェックなどのロジックを入れるが
+  // 簡易的に「時間経過」でコンボが切れるようにするならここに追加
+  
   return (
     <div style={{ width: '100%', height: '100%', background: '#111', overflow: 'hidden' }}>
-      <Canvas shadows camera={{ position: [0, 8, 15], fov: 60 }}>
-        <ambientLight intensity={0.6} />
+      <Canvas shadows fov={60}>
+        <CameraController target={cameraTarget} />
+        
+        <ambientLight intensity={0.5} />
         <pointLight position={[10, 20, 10]} intensity={1} castShadow />
         <Sky sunPosition={[100, 20, 100]} />
+        
         <Physics gravity={[0, -9.8, 0]}>
           <Court />
-          <Hoop onScore={handleScore} />
-          <PlayerBall setBallPos={setBallPos} isResetting={isResetting} />
+          <Hoop onScore={handleScore} isOnFire={isOnFire} />
+          <PlayerBall setBallPos={setBallPos} isResetting={isResetting} setCameraTarget={setCameraTarget} />
         </Physics>
-        <OrbitControls target={[0, 2, -5]} />
       </Canvas>
       
       {/* UI: スコアボード */}
       <div style={{
-        position: 'absolute', top: 20, width: '100%', textAlign: 'center',
-        pointerEvents: 'none', color: 'white', textShadow: '2px 2px 0 #000'
+        position: 'absolute', top: 20, width: '100%', textAlign: 'center', pointerEvents: 'none',
+        color: isOnFire ? '#00ffff' : 'white', textShadow: isOnFire ? '0 0 10px #00ffff' : '2px 2px 0 #000'
       }}>
-        <h1 style={{ fontSize: '4rem', margin: 0, fontFamily: 'Impact, sans-serif' }}>
+        <h1 style={{ fontSize: '4rem', margin: 0, fontFamily: 'Impact' }}>
           {score} <span style={{ fontSize: '1.5rem' }}>PTS</span>
         </h1>
+        {isOnFire && <div style={{ fontSize: '1.5rem', fontWeight:'bold', animation:'pulse 0.5s infinite'}}>🔥 ON FIRE! (x2) 🔥</div>}
       </div>
 
       {/* UI: ゴール演出 */}
       {showGoalEffect && (
         <div style={{
-          position: 'absolute', top: '40%', width: '100%', textAlign: 'center',
-          pointerEvents: 'none', color: '#ffd700', textShadow: '0 0 20px orange',
+          position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none',
+          color: isOnFire ? '#00ffff' : '#ffd700', textShadow: '0 0 20px orange',
           animation: 'pop 0.5s ease-out'
         }}>
           <h1 style={{ fontSize: '6rem', margin: 0, fontWeight: '900', fontStyle: 'italic' }}>GOAL!!</h1>
         </div>
       )}
       
-      {/* UI: スマホ操作 */}
+      {/* 操作UI */}
       <div style={{ position: 'absolute', bottom: 30, left: 30, zIndex: 10 }}>
         <Joystick 
           size={100} 
@@ -286,10 +378,11 @@ export default function App() {
       <div style={{ position: 'absolute', bottom: 50, right: 30, zIndex: 10 }}>
         <button 
           style={{
-            width: '80px', height: '80px', borderRadius: '50%', 
-            border: 'none', background: 'linear-gradient(135deg, #ff6b00, #ff4500)', 
-            color: 'white', fontWeight: 'bold', fontSize: '16px',
-            boxShadow: '0 4px 15px rgba(255, 69, 0, 0.6)'
+            width: '90px', height: '90px', borderRadius: '50%', border: '4px solid rgba(255,255,255,0.5)',
+            background: 'linear-gradient(135deg, #ff6b00, #ff4500)', 
+            color: 'white', fontWeight: 'bold', fontSize: '18px',
+            boxShadow: '0 4px 15px rgba(255, 69, 0, 0.6)',
+            transition: 'transform 0.1s',
           }}
           onMouseDown={() => window.handleMobileChargeStart && window.handleMobileChargeStart()}
           onMouseUp={() => window.handleMobileChargeEnd && window.handleMobileChargeEnd()}
@@ -299,6 +392,12 @@ export default function App() {
           SHOOT
         </button>
       </div>
+      
+      {/* スタイル定義（CSSアニメーション用） */}
+      <style>{`
+        @keyframes pop { 0% { transform: scale(0); opacity:0; } 50% { transform: scale(1.2); } 100% { transform: scale(1); opacity:1; } }
+        @keyframes pulse { 0% { opacity: 0.8; } 50% { opacity: 1; text-shadow: 0 0 20px cyan; } 100% { opacity: 0.8; } }
+      `}</style>
     </div>
   );
 }
