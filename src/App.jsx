@@ -16,6 +16,7 @@ const TEAMS = {
 const BALL_RADIUS = 0.14; 
 const HOOP_RADIUS = 0.35; 
 const BALL_START_POS = [0, 2, 6];
+const HOOP_POSITION = [0, 3.05, -12]; // ゴールの位置座標
 
 // --- 音声機能 ---
 const playSound = (type) => {
@@ -47,43 +48,68 @@ const playSound = (type) => {
   }
 };
 
-// --- 見えない壁（コートの境界） ---
+// --- 見えない壁（高さ強化版） ---
 function Walls() {
-  // コートサイズ(約15x28)に合わせて透明な壁を配置
-  // args: [幅, 高さ, 奥行き]
-  useBox(() => ({ type: 'Static', position: [8.5, 2, 0], args: [1, 5, 32] })); // 右
-  useBox(() => ({ type: 'Static', position: [-8.5, 2, 0], args: [1, 5, 32] })); // 左
-  useBox(() => ({ type: 'Static', position: [0, 2, 15.5], args: [18, 5, 1] })); // 手前
-  useBox(() => ({ type: 'Static', position: [0, 2, -15.5], args: [18, 5, 1] })); // 奥
-  return null; // 見えないので描画なし
+  // 高さ(y)を5から20に変更し、脱出不可能に
+  useBox(() => ({ type: 'Static', position: [8.5, 10, 0], args: [1, 20, 32] })); // 右
+  useBox(() => ({ type: 'Static', position: [-8.5, 10, 0], args: [1, 20, 32] })); // 左
+  useBox(() => ({ type: 'Static', position: [0, 10, 15.5], args: [18, 20, 1] })); // 手前
+  useBox(() => ({ type: 'Static', position: [0, 10, -15.5], args: [18, 20, 1] })); // 奥
+  return null;
 }
 
-// --- 選手モデル ---
-function PlayerModel({ team, isShooting }) {
+// --- 選手モデル（アニメーション付き） ---
+function PlayerModel({ team, isShooting, isMoving }) {
+  const leftLeg = useRef();
+  const rightLeg = useRef();
+  const bodyGroup = useRef();
+
+  useFrame((state) => {
+    if (isMoving && !isShooting) {
+      // 歩行アニメーション（足を前後に振る）
+      const t = state.clock.elapsedTime * 10;
+      if (leftLeg.current) leftLeg.current.rotation.x = Math.sin(t) * 0.5;
+      if (rightLeg.current) rightLeg.current.rotation.x = Math.sin(t + Math.PI) * 0.5;
+      // 体を少し上下させる
+      if (bodyGroup.current) bodyGroup.current.position.y = Math.abs(Math.sin(t * 2)) * 0.05;
+    } else {
+      // 停止時は足を戻す
+      if (leftLeg.current) leftLeg.current.rotation.x = 0;
+      if (rightLeg.current) rightLeg.current.rotation.x = 0;
+      if (bodyGroup.current) bodyGroup.current.position.y = 0;
+    }
+  });
+
   return (
-    <group position={[0, 0, 0.4]}> 
+    <group ref={bodyGroup} position={[0, 0, 0.4]}> 
       <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[0.5, 0.6, 0.25]} /><meshStandardMaterial color={team.primary} /></mesh>
       <Text position={[0, 0.9, -0.13]} rotation={[0, Math.PI, 0]} fontSize={0.3} color={team.secondary}>23</Text>
       <mesh position={[0, 1.45, 0]} castShadow><boxGeometry args={[0.25, 0.3, 0.25]} /><meshStandardMaterial color={team.skin} /></mesh>
+      {/* 腕 */}
       <mesh position={[0.3, isShooting ? 1.4 : 0.9, 0.1]} rotation={[isShooting ? Math.PI : 0, 0, 0]} castShadow><boxGeometry args={[0.12, 0.5, 0.12]} /><meshStandardMaterial color={team.skin} /></mesh>
       <mesh position={[-0.3, 0.9, 0]} castShadow><boxGeometry args={[0.12, 0.5, 0.12]} /><meshStandardMaterial color={team.skin} /></mesh>
       <mesh position={[0, 0.5, 0]}><boxGeometry args={[0.52, 0.3, 0.26]} /><meshStandardMaterial color={team.secondary} /></mesh>
-      <mesh position={[-0.15, 0.15, 0]}><boxGeometry args={[0.15, 0.4, 0.15]} /><meshStandardMaterial color="#333" /></mesh>
-      <mesh position={[0.15, 0.15, 0]}><boxGeometry args={[0.15, 0.4, 0.15]} /><meshStandardMaterial color="#333" /></mesh>
+      
+      {/* 足（アニメーション用Ref追加） */}
+      <group position={[-0.15, 0.35, 0]} ref={leftLeg}>
+        <mesh position={[0, -0.2, 0]}><boxGeometry args={[0.15, 0.4, 0.15]} /><meshStandardMaterial color="#333" /></mesh>
+      </group>
+      <group position={[0.15, 0.35, 0]} ref={rightLeg}>
+        <mesh position={[0, -0.2, 0]}><boxGeometry args={[0.15, 0.4, 0.15]} /><meshStandardMaterial color="#333" /></mesh>
+      </group>
     </group>
   );
 }
 
 // --- ボール＆プレイヤー制御 ---
 function PlayerBall({ isResetting, setCameraTarget, team }) {
-  // 【修正】操作性を向上（摩擦を下げ、動きやすく）
   const [ref, api] = useSphere(() => ({
     mass: 1, 
     position: BALL_START_POS, 
     args: [BALL_RADIUS],
     restitution: 0.7, 
-    friction: 0.3, // 摩擦を少し下げる（0.8 -> 0.3）
-    linearDamping: 0.2, // 空気抵抗を下げる（0.5 -> 0.2）
+    friction: 0.1, // 摩擦をさらに下げて動きやすく
+    linearDamping: 0.1, // 空気抵抗も下げてスムーズに
     angularDamping: 0.5,
   }));
 
@@ -113,14 +139,35 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
     setCharging(false);
     const shootPower = Math.min(power, 100) / 100;
     
-    if (shootPower > 0.1) {
+    // 現在のボール位置を取得して計算
+    if (ref.current && shootPower > 0.1) {
+      const currentPos = ref.current.position;
+      
+      // 【重要】ゴール方向へのベクトルを計算（オートエイム）
+      const targetX = HOOP_POSITION[0];
+      const targetZ = HOOP_POSITION[2];
+      
+      // 距離と方向を計算
+      const dx = targetX - currentPos.x;
+      const dz = targetZ - currentPos.z;
+      const angle = Math.atan2(dx, dz); // ゴールへの角度
+      
       playSound('shoot');
       isShooting.current = true;
       setCameraTarget(ref);
 
-      const forwardForce = 3 + (shootPower * 11);
-      const upForce = 5 + (shootPower * 8);
-      api.velocity.set(0, upForce, -forwardForce);
+      // 角度に基づいて力を加える
+      // 距離が遠いと少し強く飛ばす補正も入れても良いが、まずは方向重視
+      const forwardSpeed = 3 + (shootPower * 11); 
+      const upSpeed = 5 + (shootPower * 8);
+
+      // velocity.set(x, y, z)
+      api.velocity.set(
+        Math.sin(angle) * forwardSpeed, // X成分
+        upSpeed,                        // Y成分（高さ）
+        Math.cos(angle) * forwardSpeed  // Z成分
+      );
+      
       api.angularVelocity.set(15, 0, 0);
 
       setTimeout(() => {
@@ -132,27 +179,34 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
   };
 
   useFrame(() => {
-    // 物理演算ボールの位置を選手モデルに同期
     const pos = ref.current?.position;
     if (pos && playerGroupRef.current) {
       playerGroupRef.current.position.set(pos.x, 0, pos.z); 
-      // 移動中なら向きを変える
+      
+      // 移動中なら、その方向に体を向ける
       if (!isShooting.current && (movement.x !== 0 || movement.z !== 0)) {
-         const angle = Math.atan2(movement.x, movement.z);
-         playerGroupRef.current.rotation.y = angle;
+         const moveAngle = Math.atan2(movement.x, movement.z);
+         // スムーズに向きを変える（線形補間は複雑になるので直接設定）
+         playerGroupRef.current.rotation.y = moveAngle;
+      } else if (isShooting.current) {
+        // シュート中はゴールの方を向く
+        const dx = HOOP_POSITION[0] - pos.x;
+        const dz = HOOP_POSITION[2] - pos.z;
+        playerGroupRef.current.rotation.y = Math.atan2(dx, dz);
       }
     }
 
-    // 移動力の適用
     if (!isShooting.current) {
       if (movement.x !== 0 || movement.z !== 0) {
-        // 【修正】パワーをアップ（8 -> 15）
-        const speed = 15;
+        // 力強く移動
+        const speed = 20; 
         api.applyForce([movement.x * speed, 0, movement.z * speed], [0, 0, 0]);
       }
     }
     if (charging) setPower(p => Math.min(p + 2.5, 100));
   });
+
+  const isMoving = (movement.x !== 0 || movement.z !== 0);
 
   return (
     <group>
@@ -170,7 +224,7 @@ function PlayerBall({ isResetting, setCameraTarget, team }) {
         )}
       </mesh>
       <group ref={playerGroupRef}>
-        <PlayerModel team={team} isShooting={isShooting.current || charging} />
+        <PlayerModel team={team} isShooting={isShooting.current || charging} isMoving={isMoving} />
       </group>
     </group>
   );
@@ -291,7 +345,7 @@ export default function App() {
         <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
         <Physics gravity={[0, -9.8, 0]}>
           <Court team={team} />
-          {/* ここで壁を追加 */}
+          {/* 壁の高さ強化版 */}
           <Walls />
           <Hoop onScore={handleScore} team={team} shotClock={shotClock} />
           <PlayerBall isResetting={isResetting} setCameraTarget={setCameraTarget} team={team} />
