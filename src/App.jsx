@@ -59,80 +59,72 @@ const playSound = (type) => {
 };
 
 // --- 選手モデル（見た目のみ） ---
-function PlayerModel({ position, rotation, team, isShooting }) {
-  // 簡易的なブロック人間
-  // positionはボールの位置。そこから少しずらして描画する
+function PlayerModel({ team, isShooting }) {
   return (
-    <group position={position} rotation={[0, rotation, 0]}>
-      <group position={[0, 0, 0.4]}> {/* ボールの後ろ(0.4m)に配置 */}
-        {/* 胴体 */}
-        <mesh position={[0, 0.9, 0]} castShadow>
-          <boxGeometry args={[0.5, 0.6, 0.25]} />
-          <meshStandardMaterial color={team.primary} />
-        </mesh>
-        {/* ゼッケン */}
-        <Text position={[0, 0.9, -0.13]} rotation={[0, Math.PI, 0]} fontSize={0.3} color={team.secondary}>
-          23
-        </Text>
-        {/* 頭 */}
-        <mesh position={[0, 1.45, 0]} castShadow>
-          <boxGeometry args={[0.25, 0.3, 0.25]} />
-          <meshStandardMaterial color={team.skin} />
-        </mesh>
-        {/* 右腕（シュート時に上がる） */}
-        <mesh 
-          position={[0.3, isShooting ? 1.4 : 0.9, 0.1]} 
-          rotation={[isShooting ? Math.PI : 0, 0, 0]}
-          castShadow
-        >
-          <boxGeometry args={[0.12, 0.5, 0.12]} />
-          <meshStandardMaterial color={team.skin} />
-        </mesh>
-        {/* 左腕 */}
-        <mesh position={[-0.3, 0.9, 0]} castShadow>
-          <boxGeometry args={[0.12, 0.5, 0.12]} />
-          <meshStandardMaterial color={team.skin} />
-        </mesh>
-        {/* パンツ */}
-        <mesh position={[0, 0.5, 0]}>
-          <boxGeometry args={[0.52, 0.3, 0.26]} />
-          <meshStandardMaterial color={team.secondary} />
-        </mesh>
-        {/* 足 */}
-        <mesh position={[-0.15, 0.15, 0]}>
-          <boxGeometry args={[0.15, 0.4, 0.15]} />
-          <meshStandardMaterial color="#333" />
-        </mesh>
-        <mesh position={[0.15, 0.15, 0]}>
-          <boxGeometry args={[0.15, 0.4, 0.15]} />
-          <meshStandardMaterial color="#333" />
-        </mesh>
-      </group>
+    <group position={[0, 0, 0.4]}> {/* ボールの後ろに配置 */}
+      {/* 胴体 */}
+      <mesh position={[0, 0.9, 0]} castShadow>
+        <boxGeometry args={[0.5, 0.6, 0.25]} />
+        <meshStandardMaterial color={team.primary} />
+      </mesh>
+      {/* ゼッケン */}
+      <Text position={[0, 0.9, -0.13]} rotation={[0, Math.PI, 0]} fontSize={0.3} color={team.secondary}>
+        23
+      </Text>
+      {/* 頭 */}
+      <mesh position={[0, 1.45, 0]} castShadow>
+        <boxGeometry args={[0.25, 0.3, 0.25]} />
+        <meshStandardMaterial color={team.skin} />
+      </mesh>
+      {/* 右腕（シュート時に上がる） */}
+      <mesh 
+        position={[0.3, isShooting ? 1.4 : 0.9, 0.1]} 
+        rotation={[isShooting ? Math.PI : 0, 0, 0]}
+        castShadow
+      >
+        <boxGeometry args={[0.12, 0.5, 0.12]} />
+        <meshStandardMaterial color={team.skin} />
+      </mesh>
+      {/* 左腕 */}
+      <mesh position={[-0.3, 0.9, 0]} castShadow>
+        <boxGeometry args={[0.12, 0.5, 0.12]} />
+        <meshStandardMaterial color={team.skin} />
+      </mesh>
+      {/* パンツ */}
+      <mesh position={[0, 0.5, 0]}>
+        <boxGeometry args={[0.52, 0.3, 0.26]} />
+        <meshStandardMaterial color={team.secondary} />
+      </mesh>
+      {/* 足 */}
+      <mesh position={[-0.15, 0.15, 0]}>
+        <boxGeometry args={[0.15, 0.4, 0.15]} />
+        <meshStandardMaterial color="#333" />
+      </mesh>
+      <mesh position={[0.15, 0.15, 0]}>
+        <boxGeometry args={[0.15, 0.4, 0.15]} />
+        <meshStandardMaterial color="#333" />
+      </mesh>
     </group>
   );
 }
 
 // --- ボール＆プレイヤー制御 ---
-function PlayerBall({ setBallPos, isResetting, setCameraTarget, team }) {
+function PlayerBall({ isResetting, setCameraTarget, team }) {
   const [ref, api] = useSphere(() => ({
     mass: 1, 
     position: BALL_START_POS, 
     args: [BALL_RADIUS],
     restitution: 0.7, 
-    friction: 0.8, // 滑り防止：摩擦をアップ
-    linearDamping: 0.5, // 滑り防止：空気抵抗をアップ（すぐ止まる）
+    friction: 0.8,
+    linearDamping: 0.5,
     angularDamping: 0.5,
   }));
 
+  const playerGroupRef = useRef(); // 選手モデル操作用Ref
   const [movement, setMovement] = useState({ x: 0, z: 0 });
   const [charging, setCharging] = useState(false);
   const [power, setPower] = useState(0);
   const isShooting = useRef(false);
-  
-  // プレイヤーの向き（ラジアン）
-  const [playerRotation, setPlayerRotation] = useState(0);
-  // プレイヤー描画用の位置（ボールの位置をステートに保存して追従させる）
-  const [visualPos, setVisualPos] = useState([0,0,0]);
 
   useEffect(() => {
     if (isResetting) {
@@ -154,19 +146,16 @@ function PlayerBall({ setBallPos, isResetting, setCameraTarget, team }) {
     setCharging(false);
     const shootPower = Math.min(power, 100) / 100;
     
-    // パワーが弱すぎる場合はシュートキャンセル
     if (shootPower > 0.1) {
       playSound('shoot');
       isShooting.current = true;
       setCameraTarget(ref);
 
-      // シュート物理演算
       const forwardForce = 3 + (shootPower * 11);
       const upForce = 5 + (shootPower * 8);
       api.velocity.set(0, upForce, -forwardForce);
       api.angularVelocity.set(15, 0, 0);
 
-      // 【修正】3秒後に強制的に移動可能に戻す（外しても動けるように）
       setTimeout(() => {
         isShooting.current = false;
         setCameraTarget(null);
@@ -176,25 +165,24 @@ function PlayerBall({ setBallPos, isResetting, setCameraTarget, team }) {
   };
 
   useFrame(() => {
-    // 座標取得
+    // 物理演算ボールの位置を取得
     const pos = ref.current?.position;
 
-    if (pos) {
-       // プレイヤーモデルの表示位置更新（yは0固定で地面に立たせる）
-       setVisualPos([pos.x, 0, pos.z]);
-       // カメラ追従用
-       setBallPos([pos.x, pos.y, pos.z]);
+    // 選手モデルの位置を直接更新（Stateを使わないので高速・軽量）
+    if (pos && playerGroupRef.current) {
+      playerGroupRef.current.position.set(pos.x, 0, pos.z); // y=0で固定
+      
+      // 移動しているなら向きを変える
+      if (!isShooting.current && (movement.x !== 0 || movement.z !== 0)) {
+         const angle = Math.atan2(movement.x, movement.z);
+         playerGroupRef.current.rotation.y = angle;
+      }
     }
 
-    // 移動処理
     if (!isShooting.current) {
       if (movement.x !== 0 || movement.z !== 0) {
-        const speed = 8; // 【修正】速度を落として操作しやすく
+        const speed = 8;
         api.applyForce([movement.x * speed, 0, movement.z * speed], [0, 0, 0]);
-        
-        // 移動方向に向きを変える
-        const angle = Math.atan2(movement.x, movement.z);
-        setPlayerRotation(angle);
       }
     }
 
@@ -220,13 +208,13 @@ function PlayerBall({ setBallPos, isResetting, setCameraTarget, team }) {
         )}
       </mesh>
 
-      {/* 選手モデル（ボールには追従するが、物理演算の影響は受けない） */}
-      <PlayerModel 
-        position={visualPos} 
-        rotation={playerRotation} 
-        team={team} 
-        isShooting={isShooting.current || charging} // チャージ中かシュート中は腕を上げる
-      />
+      {/* 選手モデル（ボールとは別のグループとして管理） */}
+      <group ref={playerGroupRef}>
+        <PlayerModel 
+          team={team} 
+          isShooting={isShooting.current || charging} 
+        />
+      </group>
     </group>
   );
 }
@@ -329,7 +317,7 @@ function CameraController({ target }) {
 
 // --- メインアプリ ---
 export default function App() {
-  const [ballPos, setBallPos] = useState(BALL_START_POS);
+  // ※ここで不要なStateを削除しました（パフォーマンス改善）
   const [score, setScore] = useState(0);
   const [team, setTeam] = useState(TEAMS.JETS);
   const [showGoalEffect, setShowGoalEffect] = useState(false);
@@ -399,10 +387,11 @@ export default function App() {
         <Physics gravity={[0, -9.8, 0]}>
           <Court team={team} />
           <Hoop onScore={handleScore} team={team} shotClock={shotClock} />
-          <PlayerBall setBallPos={setBallPos} isResetting={isResetting} setCameraTarget={setCameraTarget} team={team} />
+          <PlayerBall isResetting={isResetting} setCameraTarget={setCameraTarget} team={team} />
         </Physics>
       </Canvas>
       
+      {/* チーム選択ボタン */}
       <div style={{ position: 'absolute', top: 20, right: 20, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {Object.keys(TEAMS).map((key) => (
           <button 
@@ -419,6 +408,7 @@ export default function App() {
         ))}
       </div>
 
+      {/* スコアボード */}
       <div style={{
         position: 'absolute', top: 20, width: '100%', textAlign: 'center', pointerEvents: 'none',
         color: 'white', textShadow: '2px 2px 0 #000'
@@ -432,6 +422,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* 警告表示 */}
       {shotClock <= 0 && (
         <div style={{
           position: 'absolute', top: '40%', width: '100%', textAlign: 'center', pointerEvents: 'none',
@@ -450,6 +441,7 @@ export default function App() {
         </div>
       )}
       
+      {/* コントローラー */}
       <div style={{ position: 'absolute', bottom: 30, left: 30, zIndex: 10 }}>
         <Joystick 
           size={100} 
